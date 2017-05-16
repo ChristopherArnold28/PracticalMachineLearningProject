@@ -1,0 +1,211 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Christopher Arnold"
+date: "May 16, 2017"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+library(readr)
+library(caret)
+library(ggplot2)
+library(knitr)
+library(randomForest)
+library(rpart)
+library(corrplot)
+opts_chunk$set(out.width='750px', dpi=200)
+set.seed(12345)
+```
+
+# Overview/Introduction
+
+This project goes through the process of gathering the raw data from devices such as Nike FuelBand, Jawbone Up and Fitbit to the prediction of the performance of some participants based on a machine learning model. These devices collect a large amount of movement data relatively inexpensively and are able to give users information about their health in an effort to find patterns in behavior. This set of data takes information on barbell lifts and categorizes the lift by how well they performed. It would be useful to be able to predict the performance of the lift based on the data generated from one of these personal activity monitoring devices. It is our goal to pair the proper model to this set of data to give us the least out of box error in an effort to give the most accurate predictions.
+
+```{r load data}
+
+trainURL    <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL     <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainData   <- read.csv(url(trainURL))
+testData    <- read.csv(url(testURL))
+
+```
+
+## Cleaning Data
+
+
+
+```{r data split}
+inTrain     <- createDataPartition(trainData$classe, p = .7, list = FALSE)
+TrainSet    <- trainData[inTrain,]
+TestSet     <- trainData[-inTrain,]
+
+
+dim(TrainSet)
+
+
+```
+
+We see that our Training set consists of 160 different variables, some of those are bound to be full of NA values or to have little variance and are thus of little importance to our prediction model. Let's first eliminate the variables that have zero variation.
+
+```{r no variation elim}
+
+ZeroVarianceCols <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[, -ZeroVarianceCols]
+TestSet <- TestSet[, -ZeroVarianceCols]
+testData <- testData[, -ZeroVarianceCols]
+dim(TrainSet)
+
+numRemoved<-length(ZeroVarianceCols)
+
+```
+
+This process removed `r numRemoved` columns from our data set. Let's continue to remove columns by looking at which variables are full of NA values. 
+
+```{r remove NA columns}
+nachecker <- function(x)
+{
+    nacheck <- is.na(x)
+    return(length(nacheck[nacheck == TRUE])/length(nacheck))
+}
+
+mostNA      <- sapply(TrainSet, FUN =  nachecker) > .95
+
+numRemoved  <- length(mostNA[mostNA == TRUE])
+
+TrainSet    <- TrainSet[, mostNA == FALSE]
+TestSet     <- TestSet[, mostNA == FALSE]
+testData    <- testData[, monstNA == FALSE]
+
+dim(TrainSet)
+
+```
+
+This process removed another `r numRemoved` columns from our data set. This leaves us with `r ncol(TrainSet)`. We will finally remove the first few columns of the data set that are not pertinent to predicting the outcome of the exercise, these are the `r colnames(TrainSet)[1:5]`
+
+```{r remove other classifiers}
+TrainSet <- TrainSet[, -(1:5)]
+TestSet <- TestSet[,-(1:5)]
+testData <- testData[, -(1:5)]
+
+dim(TrainSet)
+
+finalCols <- ncol(TrainSet)
+```
+
+After this process of cleaning we are left with `r finalCols` columns in our data. That means our prediction variable and `r finalCols - 1` predictors.
+
+Although, `r finalCols` out of the original `r ncol(trainData)` is a reasonable estimate of usable predictors, it may be useful to see if any of the remaining predictors are highly correlated. This could lead us to removing those columns or performing a pricipal components analysis to transform our data to a select few predictors.
+
+```{r correlation}
+
+correlation <- cor(TrainSet[,-54])
+
+kable(head(round(correlation,2)))
+
+corrplot(correlation, type = "lower", sig.level = .5, insig = "blank", tl.cex = .5, tl.col = "black", diag = FALSE, tl.srt = 45, order = "hclust")
+
+```
+
+From this plot we see that there are only a handful of places where there is heavy correlation between variables. We will leave our dataset at 53 predictors. 
+
+This may also be a good time to take a look at the variable we are attempting to predict in the Training set to get an idea of the distribution.
+```{r plot classe}
+
+barchart(TrainSet$classe)
+
+table(TrainSet$classe)
+
+```
+
+From this we see that classe A is the most populous of the classes in the train set and we will look for our prediction model to come up with something similar.
+
+## Prediction Modeling
+We are going to be predicting classifiers so the natural predicting models will be:
+
+* Decision Trees
+* Gradient Boosted Models (GBM)
+* Random Forest
+
+If none of these provide high accuracy we may ensemble the Random Forest with the Gradient Boosted Machine to see if that can improve the result. I will use a control method with the GBM and Random forest and compare different methods in the model creation to see if that makes a difference in accuracy.
+
+```{r decision tree, warning = FALSE}
+
+decisionTree.model <- train(classe ~ ., method = "rpart", data = TrainSet)
+decisionTree.preds <- predict(decisionTree.model, newdata = TestSet)
+
+decisionTree.confmat <- confusionMatrix(decisionTree.preds, TestSet$classe)
+decisionTree.confmat
+decisionTree.acc <- decisionTree.confmat$overall[[1]]
+decisionTree.oobe <- 1 - decisionTree.acc
+
+```
+
+
+```{r Gradient Boosted Model cv, warning = FALSE}
+
+gbmcontrol <- trainControl(method = "repeatedcv", number = 10, repeats =  1)
+gbm.cv.model <- train(classe ~ ., method = "gbm", data = TrainSet, verbose = FALSE, trControl = gbmcontrol)
+
+gbm.cv.preds <- predict(gbm.cv.model, newdata = TestSet)
+
+gbm.cv.confmat <- confusionMatrix(gbm.cv.preds, TestSet$classe)
+gbm.cv.confmat
+gbm.cv.acc <- gbm.cv.confmat$overall[[1]]
+gbm.cv.oobe <- 1-gbm.cv.acc
+
+```
+
+```{r GBM with pca preprocess, warning = FALSE}
+
+gbm.pca.model <- train(classe~., method = "gbm", data = TrainSet, verbose = FALSE, trControl = gbmcontrol, preProcess = "pca")
+gbm.pca.preds <- predict(gbm.pca.model, newdata = TestSet)
+gbm.pca.confmat <- confusionMatrix(gbm.pca.preds, TestSet$classe)
+gbm.pca.confmat
+gbm.pca.acc <- gbm.pca.confmat$overall[[1]]
+gbm.pca.oobe <- 1- gbm.pca.acc
+
+```
+
+```{r random forest cv, warning = FALSE}
+
+rf.cv.model <- train(classe~., method = "rf", data = TrainSet, trControl = gbmcontrol)
+rf.cv.preds <- predict(rf.cv.model, newdata = TestSet)
+rf.cv.confmat <- confusionMatrix(rf.cv.preds, TestSet$classe)
+rf.cv.confmat
+rf.cv.acc <- rf.cv.confmat$overall[[1]]
+rf.cv.oobe <- 1- rf.cv.acc
+
+```
+
+```{r random forest pca, warning = FALSE}
+
+rf.pca.model <- train(classe ~ ., method = "rf", data = TrainSet, trControl = gbmcontrol, preProcess = "pca")
+rf.pca.preds <- predict(rf.pca.model, newdata = TestSet)
+rf.pca.confmat <- confusionMatrix(rf.pca.preds, TestSet$classe)
+rf.pca.confmat
+rf.pca.acc <- rf.pca.confmat$overall[[1]]
+rf.pca.oobe <- 1 - rf.pca.acc
+
+```
+
+```{r combine errors, warning = FALSE}
+
+oobe <- c(decisionTree.oobe, gbm.cv.oobe, gbm.pca.oobe, rf.cv.oobe, rf.pca.oobe)
+acc <- c(decisionTree.acc, gbm.cv.acc, gbm.pca.acc, rf.cv.acc, rf.pca.acc)
+modelname <- c("Decision Tree", "GBM w/ Cross Valid.", "GBM w/ PCA", "Random Forest w/ Cross Valid.", "Random Forest w/ PCA")
+
+errorframe <- data.frame(modelnames = modelname, Accuracy = acc, OutOfBoxError = oobe)
+
+errorframe
+```
+
+We see that the Random Forest model with cross validation in the training control produces the model with the lowest out of box error rate. We can now use this to predict on the testdata from the separate url that we have not touched since cleaning the data.
+
+```{r predict test}
+
+predictions <- predict(rf.cv.model, newdata = testData)
+predictions
+
+
+```
