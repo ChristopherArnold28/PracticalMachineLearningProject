@@ -2,7 +2,7 @@
 title: "Practical Machine Learning Course Project"
 author: "Christopher Arnold"
 date: "May 16, 2017"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include = FALSE}
@@ -75,7 +75,7 @@ numRemoved  <- length(mostNA[mostNA == TRUE])
 
 TrainSet    <- TrainSet[, mostNA == FALSE]
 TestSet     <- TestSet[, mostNA == FALSE]
-testData    <- testData[, monstNA == FALSE]
+testData    <- testData[, mostNA == FALSE]
 
 dim(TrainSet)
 
